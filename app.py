@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import tempfile
+import pandas as pd
 from markitdown import MarkItDown
 
 # --- APP CONFIGURATION ---
@@ -11,10 +12,6 @@ st.set_page_config(
 )
 
 # --- INITIALIZE ENGINE ---
-# We initialize MarkItDown once.
-# Note: MarkItDown handles requests internally. 
-# While we can't easily inject headers into its deep internal calls without patching,
-# we wrap all execution in robust error handlers as requested.
 try:
     md = MarkItDown()
 except Exception as e:
@@ -22,19 +19,22 @@ except Exception as e:
 
 # --- HELPER: SAVE UPLOAD TO TEMP ---
 def save_uploaded_file(uploaded_file):
-    """
-    Saves the uploaded byte stream to a temporary file 
-    so libraries that need a file path can read it.
-    """
     try:
-        # Create a temp file with the correct extension (suffix)
-        # This helps MarkItDown detect the file type automatically
         suffix = os.path.splitext(uploaded_file.name)[1]
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             return tmp_file.name
     except Exception:
         return None
+
+# --- HELPER: FORMAT FILE SIZE ---
+def format_size(size_in_bytes):
+    if size_in_bytes < 1024:
+        return f"{size_in_bytes} bytes"
+    elif size_in_bytes < 1024 * 1024:
+        return f"{size_in_bytes / 1024:.2f} KB"
+    else:
+        return f"{size_in_bytes / (1024 * 1024):.2f} MB"
 
 # --- UI LAYOUT ---
 st.title("📄 Universal Document Reader")
@@ -43,7 +43,7 @@ st.markdown("""
     *Powered by Microsoft MarkItDown*
 """)
 
-# [2] Upload Area
+# Upload Area
 uploaded_files = st.file_uploader(
     "Drag and drop files here", 
     accept_multiple_files=True,
@@ -56,54 +56,73 @@ if uploaded_files:
     for uploaded_file in uploaded_files:
         with st.spinner(f"Processing {uploaded_file.name}..."):
             
-            # Create a localized expander for each file
             with st.expander(f"📄 {uploaded_file.name}", expanded=True):
                 
-                # 1. Save to temp path
                 temp_path = save_uploaded_file(uploaded_file)
                 
                 if temp_path:
                     try:
-                        # [1] The Engine: MarkItDown Conversion
-                        # We use a general try/except block to catch format errors
+                        # 1. Conversion
                         result = md.convert(temp_path)
                         text_content = result.text_content
                         
-                        # [2] Instant Preview (Scrollable)
-                        st.subheader("Preview")
-                        st.text_area("Content", value=text_content, height=250)
+                        # 2. Size Calculations
+                        original_size = uploaded_file.size
+                        # Estimate txt size by encoding string to bytes
+                        converted_size = len(text_content.encode('utf-8'))
                         
-                        # Generate Output Filenames
-                        base_name = os.path.splitext(uploaded_file.name)[0]
-                        md_filename = f"{base_name}_converted.md"
-                        txt_filename = f"{base_name}_converted.txt"
+                        reduction_filesize = original_size - converted_size
+                        reduction_pct = (reduction_filesize / original_size) * 100 if original_size > 0 else 0
                         
-                        # [2] Download Options (Columns for buttons)
-                        col1, col2 = st.columns(2)
+                        # 3. Create Tabs
+                        tab_preview, tab_stats = st.tabs(["👁️ Preview & Download", "📊 File Size Comparison"])
                         
-                        with col1:
-                            st.download_button(
-                                label="⬇️ Download Markdown (.md)",
-                                data=text_content,
-                                file_name=md_filename,
-                                mime="text/markdown"
-                            )
+                        # --- TAB 1: PREVIEW & DOWNLOAD ---
+                        with tab_preview:
+                            st.text_area("Content", value=text_content, height=250)
                             
-                        with col2:
-                            st.download_button(
-                                label="⬇️ Download Text (.txt)",
-                                data=text_content,
-                                file_name=txt_filename,
-                                mime="text/plain"
-                            )
+                            base_name = os.path.splitext(uploaded_file.name)[0]
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.download_button(
+                                    label="⬇️ Download Markdown (.md)",
+                                    data=text_content,
+                                    file_name=f"{base_name}_converted.md",
+                                    mime="text/markdown"
+                                )
+                            with col2:
+                                st.download_button(
+                                    label="⬇️ Download Text (.txt)",
+                                    data=text_content,
+                                    file_name=f"{base_name}_converted.txt",
+                                    mime="text/plain"
+                                )
+
+                        # --- TAB 2: FILE SIZE COMPARISON ---
+                        with tab_stats:
+                            st.write("### Optimization Analysis")
                             
+                            # Create a clean DataFrame for the table
+                            data = {
+                                "Metric": ["Original File Size", "Converted .txt File Size"],
+                                "Value": [format_size(original_size), format_size(converted_size)]
+                            }
+                            df = pd.DataFrame(data)
+                            
+                            # Display the table without the index
+                            st.table(df)
+                            
+                            # Display the percentage impact
+                            if reduction_pct > 0:
+                                st.success(f"🚀 **Efficiency:** Text version is **{reduction_pct:.1f}% smaller** than the original.")
+                            else:
+                                st.info(f"ℹ️ Text version is roughly the same size or larger (common for small text-heavy files).")
+
                     except Exception as e:
-                        # [3] Resilience & Cheeky Error Message
                         st.error("⚠️ Sahi format mein file daal Bey!!")
                         st.caption(f"Technical Error Details: {str(e)}")
                     
                     finally:
-                        # Cleanup temp file
                         if os.path.exists(temp_path):
                             os.remove(temp_path)
                 else:
