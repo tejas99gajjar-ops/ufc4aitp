@@ -1,2 +1,10 @@
 streamlit
-markitdown[all]
+markitdown
+# Explicitly installing the engines MarkItDown is looking for:
+pdfminer.six
+pandas
+openpyxl
+python-pptx
+beautifulsoup4
+mammoth
+markdown
