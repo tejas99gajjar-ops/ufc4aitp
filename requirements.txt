@@ -1,3 +1,2 @@
 streamlit
-markitdown
-requests
+markitdown[all]
